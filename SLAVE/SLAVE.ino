@@ -1,21 +1,20 @@
 #include <Arduino.h>
 #include "BluetoothSerial.h"
-
 BluetoothSerial SerialBT;
 
-// ====== L298N (1 kênh) ======
-#define ENA_PIN  17       // PWM pin
-#define IN1_PIN  16
-#define IN2_PIN  4
+#define ENA_PIN    17      
+#define IN1_PIN    16
+#define IN2_PIN    4
 
-// PWM (LEDC) - ESP32 core 3.3.3
+// Cấu hình PWM cho ESP32 Core v2.x
 #define FAN_PWM_FREQ    25000
-#define FAN_PWM_RES     8        // duty 0..255
+#define FAN_PWM_RES     8      
+#define FAN_PWM_CHANNEL 0       
 
 static uint8_t currentDuty = 0;
 
 static void motorStop() {
-  ledcWrite(ENA_PIN, 0);
+  ledcWrite(FAN_PWM_CHANNEL, 0);
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, LOW);
   currentDuty = 0;
@@ -27,7 +26,8 @@ static void motorForwardPWM(uint8_t duty, const char* statusText) {
   digitalWrite(IN2_PIN, LOW);
 
   currentDuty = duty;
-  ledcWrite(ENA_PIN, duty);
+  // Với Core v2, ta write vào CHANNEL
+  ledcWrite(FAN_PWM_CHANNEL, duty);
 
   Serial.printf(">>> FAN duty = %u/255 | %s\n", duty, statusText);
 }
@@ -37,42 +37,48 @@ static void handleCmd(const String& cmd) {
     motorStop();
   } else if (cmd == "bat") {
     motorForwardPWM(150, "On");
-  } else if (cmd == "so_hai") {
+  } else if (cmd == "mot") {
+    motorForwardPWM(150, "So 1");
+  } else if (cmd == "hai") {
     motorForwardPWM(200, "So 2");
-  } else if (cmd == "so_ba") {
-    motorForwardPWM(250, "So 3");
-  }
+  } 
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(921600);
   delay(300);
-
-  // L298N pins
   pinMode(IN1_PIN, OUTPUT);
   pinMode(IN2_PIN, OUTPUT);
   digitalWrite(IN1_PIN, LOW);
   digitalWrite(IN2_PIN, LOW);
 
-  // PWM init (ENA) - core 3.3.3
-  ledcAttach(ENA_PIN, FAN_PWM_FREQ, FAN_PWM_RES);
-  ledcWrite(ENA_PIN, 0);
+
+  ledcSetup(FAN_PWM_CHANNEL, FAN_PWM_FREQ, FAN_PWM_RES);
+  ledcAttachPin(ENA_PIN, FAN_PWM_CHANNEL);
+  ledcWrite(FAN_PWM_CHANNEL, 0);
 
   // Bluetooth SPP SLAVE
   SerialBT.begin("ESP32_FAN_SLAVE");
-  SerialBT.setPin("1234", 4);  // optional
-
+  SerialBT.setPin("1234");
   motorStop();
   Serial.println("=== SLAVE OK - BT name: ESP32_FAN_SLAVE ===");
 }
 
 void loop() {
-  static String line = "";
+  if (!SerialBT.connected()) {
+    if (currentDuty > 0) {
+      Serial.println("!!! MAT KET NOI -> DUNG KHAN CAP !!!");
+      motorStop();
+    }
+    delay(100);
+    return;
+  }
 
+  // --- XỬ LÝ LỆNH KHI CÓ KẾT NỐI ---
+  static String line = "";
   while (SerialBT.available()) {
     char c = (char)SerialBT.read();
     if (c == '\r') continue;
-
     if (c == '\n') {
       line.trim();
       if (line.length()) {
